@@ -1,0 +1,123 @@
+---
+title: "R Notebook"
+output:
+  html_document: default
+  html_notebook: default
+---
+
+functions stuff
+```{r}
+draw<-function() {
+  
+  #random allele freqs from a neutral model
+  p_del=as.numeric(0)
+  while(sum(p_del)==0 || sum(p_del)>1){
+    p_del=as.numeric(0)
+    p_del <- rep(1:100/100,times=c(rmultinom(n=1,size=round(1+rexp(1,.9)),prob=c(1/1:100))))
+  }
+  
+  return(p_del)
+}
+```
+
+
+do sims
+```{r}
+nsims=10000
+
+#make deletion and nondeltion allele frequencies
+deletion_freqs <- (replicate(nsims, draw()))
+non_del_allele = lapply(deletion_freqs,function(x) 1-sum(x))
+
+all_sizes=as.numeric()
+sims=list()
+for(i in 1:nsims){
+  alleles=c(deletion_freqs[[i]],non_del_allele[[i]])
+  #random generate the deletion size
+  #sizes=c(runif(length(alleles)-1),0) #uniform
+  sizes=c(rbeta(length(alleles)-1,shape1=0.5,shape2=1),0) #beta
+  #sizes=c(rep(0.5,length(alleles)-1),0) # with this and >.5 = hom, >0 = het should be in perfect HWE
+
+  all_sizes=c(all_sizes,sizes)
+  genos=as.numeric()
+  geno_freqs=as.numeric()
+  for(j in 1:(length(alleles))){
+    for(k in 1:(length(alleles))){
+      geno_freqs[length(geno_freqs)+1]=alleles[j]*alleles[k]
+      if(sizes[j]+sizes[k]>0.5){ 
+        genos[length(genos)+1]=2 #deletion homozgyote
+      }
+      else if(sizes[j]+sizes[k]>0){
+        genos[length(genos)+1]=1 #het
+      }
+      else{
+        genos[length(genos)+1]=0 #normal homozgyote
+      }
+    }
+  }
+  estimated_del_freq=sum(geno_freqs*genos)/2
+  hom_del<-sum(subset(geno_freqs,genos==2))
+  hom_norm<-sum(subset(geno_freqs,genos==0))
+  het<-sum(subset(geno_freqs,genos==1))
+  sims[[i]]=(c(estimated_del_freq,hom_del,het,hom_norm,length(alleles)-1))
+}
+
+deldata=data.frame(matrix(unlist(sims), ncol=5, nrow=nsims, byrow=TRUE),1-unlist(non_del_allele))
+colnames(deldata)=c("pA", "pAA","pAB","pBB", "num_del","real_freq")
+```
+
+deletion freq vs. estimated freq
+```{r}
+ggplot(deldata,aes(x=real_freq,y=pA)) +
+  geom_point(alpha=0.25) 
+cor(deldata$pA,deldata$real_freq)
+```
+
+
+histogram of deletion sizes
+```{r}
+hist(all_sizes)
+```
+
+
+histogram of total deletion freq.
+```{r}
+#sfs of total deletion freq
+hist(1-unlist(non_del_allele))
+```
+
+
+deletions 
+```{r}
+#how many deletion alleles per locus?
+table(unlist(lapply(deletion_freqs,function(x) length(x))))
+```
+
+deletions vs. freq
+```{r}
+# check number of deletions per allele frequency
+ggplot(deldata,aes(y=pA,x=num_del,group=num_del))+geom_boxplot()
+```
+
+```{r}
+#make HW plot
+  dat<-filter(deldata, pA > 0 & pA<1) %>%
+  mutate(bin=cut(pA,0:100/100)) %>% 
+  rename(AA=pAA,Aa=pAB,aa=pBB,p=pA) %>% 
+  group_by(bin) %>% 
+  summarize(mp=mean(p),AA=mean(AA),Aa=mean(Aa),aa=mean(aa)) %>% 
+  gather(geno,frequency,-mp,-bin) %>%
+  mutate(efreq=if_else(geno=="AA",mp^2,if_else(geno=="Aa",2*mp*(1-mp),(1-mp)^2)), ss=(frequency-efreq)^2) 
+
+  main<-ggplot(dat,aes(x=mp,y=frequency,color=geno)) + 
+  geom_point() +
+  geom_line(aes(x=mp,y=efreq,color=geno)) +
+  theme(panel.grid.major = element_line(colour="gray", size=0.1)) 
+  
+  xbar <- axis_canvas(main, axis = "x") +
+  geom_col(data=dat,aes(x = mp,y=ss)) + ylab("ss")
+
+# create the combined plot
+combined_plot <- insert_xaxis_grob(main, xbar, position = "bottom")
+ggdraw(combined_plot)
+```
